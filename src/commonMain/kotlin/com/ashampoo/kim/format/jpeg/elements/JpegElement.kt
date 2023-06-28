@@ -14,25 +14,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.ashampoo.kim.format.jpeg
+package com.ashampoo.kim.format.jpeg.elements
 
-interface JpegVisitor {
+import com.ashampoo.kim.input.ByteReader
 
-    /** Return false to exit before reading image data. */
-    fun beginSOS(): Boolean
+sealed interface JpegElement {
+    val marker: Int
+}
 
-    fun visitSOS(
-        marker: Int,
-        markerBytes: ByteArray,
-        imageData: ByteArray
-    )
+sealed interface JpegBytesElement : JpegElement {
+    val bytes: ByteArray
+}
 
-    /** Return false to exit traversal. */
-    fun visitSegment(
-        marker: Int,
-        markerBytes: ByteArray,
-        segmentLength: Int,
-        segmentLengthBytes: ByteArray,
-        segmentBytes: ByteArray
-    ): Boolean
+sealed interface JpegSegment : JpegElement {
+    val description: String
+}
+
+class JpegSOS(
+    override val marker: Int,
+    private val remainingBytes: ByteReader
+) : JpegBytesElement {
+    val imageData: ByteArray
+        get() = remainingBytes.readRemainingBytes()
+    override val bytes: ByteArray get() = imageData
+
+    operator fun component1() = marker
+    operator fun component2() = imageData
 }

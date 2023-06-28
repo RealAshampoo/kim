@@ -14,18 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.ashampoo.kim.format.jpeg.segments
+package com.ashampoo.kim.format.jpeg.elements
 
-import com.ashampoo.kim.format.jpeg.JpegConstants
-import com.ashampoo.kim.input.ByteArrayByteReader
-import com.ashampoo.kim.input.ByteReader
-
-open class AppnSegment(marker: Int, markerLength: Int, byteReader: ByteReader) :
-    GenericSegment(marker, markerLength, byteReader) {
-
-    constructor(marker: Int, segmentData: ByteArray) :
-        this(marker, segmentData.size, ByteArrayByteReader(segmentData))
-
-    override fun getDescription(): String =
-        "APPN (APP" + (marker - JpegConstants.JPEG_APP0_MARKER) + ") (" + marker + ")"
+sealed class Segment : JpegSegment {
+    // Final so that data class inheritors won't override it
+    final override fun toString(): String =
+        "[JPEG Segment " + description + "]"
 }

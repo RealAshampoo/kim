@@ -20,6 +20,9 @@ import com.ashampoo.kim.common.BinaryFileParser
 import com.ashampoo.kim.common.ImageReadException
 import com.ashampoo.kim.common.toUInt16
 import com.ashampoo.kim.format.jpeg.JpegConstants.JPEG_BYTE_ORDER
+import com.ashampoo.kim.format.jpeg.elements.JpegBytesElement
+import com.ashampoo.kim.format.jpeg.elements.JpegSOS
+import com.ashampoo.kim.format.jpeg.elements.UnknownSegment
 import com.ashampoo.kim.input.ByteReader
 
 object JpegUtils : BinaryFileParser() {
@@ -43,47 +46,32 @@ object JpegUtils : BinaryFileParser() {
         return markerBytes
     }
 
-    fun traverseJFIF(byteReader: ByteReader, visitor: JpegVisitor) {
-
+    fun readJFIF(byteReader: ByteReader): Sequence<JpegBytesElement> = sequence {
         byteReader.readAndVerifyBytes("JPEG SOI (0xFFD8)", JpegConstants.SOI)
-
         while (true) {
-
-            val markerBytes = findNextMarkerBytes(byteReader)
-
-            val marker = markerBytes.toUInt16(byteOrder)
-
-            if (marker == JpegConstants.EOI_MARKER || marker == JpegConstants.SOS_MARKER) {
-
-                if (!visitor.beginSOS())
-                    return
-
-                val imageData = byteReader.readRemainingBytes()
-
-                visitor.visitSOS(marker, markerBytes, imageData)
-
-                break
-            }
-
-            val segmentLengthBytes = byteReader.readBytes("segmentLengthBytes", 2)
-
-            val segmentLength = segmentLengthBytes.toUInt16(byteOrder)
-
-            if (segmentLength < 2)
-                throw ImageReadException("Invalid segment size: $segmentLength")
-
-            val segmentData = byteReader.readBytes("segmentData", segmentLength - 2)
-
-            val analyzeNextSegment = visitor.visitSegment(
-                marker,
-                markerBytes,
-                segmentLength,
-                segmentLengthBytes,
-                segmentData
-            )
-
-            if (!analyzeNextSegment)
-                return
+            val element = nextJpegElement(byteReader)
+            if (element != null) yield(element)
+            if (element is JpegSOS) break
         }
+    }
+
+    private fun nextJpegElement(byteReader: ByteReader): JpegBytesElement? {
+        val markerBytes = findNextMarkerBytes(byteReader)
+
+        val marker = markerBytes.toUInt16(byteOrder)
+
+        if (marker == JpegConstants.EOI_MARKER || marker == JpegConstants.SOS_MARKER)
+            return JpegSOS(marker, byteReader)
+
+        val segmentLengthBytes = byteReader.readBytes("segmentLengthBytes", 2)
+
+        val segmentLength = segmentLengthBytes.toUInt16(byteOrder)
+
+        if (segmentLength < 2)
+            throw ImageReadException("Invalid segment size: $segmentLength")
+
+        val segmentBytes = byteReader.readBytes("segmentData", segmentLength - 2)
+
+        return UnknownSegment(marker, segmentBytes)
     }
 }

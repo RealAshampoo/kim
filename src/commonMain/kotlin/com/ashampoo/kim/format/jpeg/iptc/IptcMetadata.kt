@@ -38,4 +38,9 @@ data class IptcMetadata(
 
         return sb.toString()
     }
+
+    operator fun plus(other: IptcMetadata): IptcMetadata = IptcMetadata(
+        records = records + other.records,
+        rawBlocks = rawBlocks + other.rawBlocks
+    )
 }

@@ -14,17 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.ashampoo.kim.format.jpeg.jfif
+package com.ashampoo.kim.format.jpeg.elements
 
-import com.ashampoo.kim.output.ByteWriter
+import com.ashampoo.kim.input.ByteReader
+import io.ktor.utils.io.charsets.Charset
+import io.ktor.utils.io.core.String
 
-class JFIFPieceImageData(
-    private val markerBytes: ByteArray,
-    private val imageData: ByteArray
-) : JFIFPiece {
+sealed interface GenericSegment : JpegSegment {
+    val segmentBytes: ByteArray
+    fun getSegmentDataAsString(charset: Charset): String =
+        String(segmentBytes, charset = charset)
 
-    override fun write(byteWriter: ByteWriter) {
-        byteWriter.write(markerBytes)
-        byteWriter.write(imageData)
+    companion object {
+        fun ByteReader.readSegmentBytes(length: Int): ByteArray =
+            readBytes("segmentBytes", length)
     }
 }

@@ -14,11 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.ashampoo.kim.format.jpeg.jfif
+package com.ashampoo.kim.format.jpeg.elements
 
-class JFIFPieceSegmentExif(
-    marker: Int,
-    markerBytes: ByteArray,
-    markerLengthBytes: ByteArray,
-    segmentBytes: ByteArray
-) : JFIFPieceSegment(marker, markerBytes, markerLengthBytes, segmentBytes)
+data class UnknownSegment(override val marker: Int, override val segmentBytes: ByteArray) :
+    Segment(), GenericSegment, JpegBytesElement {
+    override val bytes: ByteArray get() = segmentBytes
+    override val description: String get() = "Unknown ($marker)"
+}

@@ -14,12 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.ashampoo.kim.format.jpeg.segments
+package com.ashampoo.kim.format.jpeg.elements
 
 import io.ktor.utils.io.charsets.Charsets
 
-class ComSegment(marker: Int, segmentData: ByteArray) : GenericSegment(marker, segmentData) {
-
-    override fun getDescription(): String =
-        "COM (" + getSegmentDataAsString(Charsets.UTF_8) + ")"
+data class ComSegment(override val marker: Int, override val segmentBytes: ByteArray) :
+    Segment(), GenericSegment {
+    override val description: String get() = "COM (" + getSegmentDataAsString(Charsets.UTF_8) + ")"
 }

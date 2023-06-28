@@ -14,18 +14,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.ashampoo.kim.format.jpeg.segments
+package com.ashampoo.kim.format.jpeg.elements
 
+import com.ashampoo.kim.format.jpeg.JpegConstants
 import com.ashampoo.kim.format.jpeg.iptc.IptcMetadata
 import com.ashampoo.kim.format.jpeg.iptc.IptcParser
-import com.ashampoo.kim.input.ByteArrayByteReader
 import com.ashampoo.kim.input.ByteReader
 
-class App13Segment(marker: Int, markerLength: Int, byteReader: ByteReader) :
-    AppnSegment(marker, markerLength, byteReader) {
-
-    constructor(marker: Int, segmentData: ByteArray) :
-        this(marker, segmentData.size, ByteArrayByteReader(segmentData))
+class App13Segment : AppnSegment {
+    override val marker: Int = JpegConstants.JPEG_APP13_MARKER
+    constructor(segmentBytes: ByteArray) : super(JpegConstants.JPEG_APP13_MARKER, segmentBytes)
+    constructor(segmentLength: Int, byteReader: ByteReader) : super(
+        JpegConstants.JPEG_APP13_MARKER,
+        segmentLength,
+        byteReader
+    )
 
     fun isPhotoshopJpegSegment(): Boolean =
         IptcParser.isIptcSegment(segmentBytes)

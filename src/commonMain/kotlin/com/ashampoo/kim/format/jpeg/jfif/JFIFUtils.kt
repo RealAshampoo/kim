@@ -16,38 +16,36 @@
  */
 package com.ashampoo.kim.format.jpeg.jfif
 
+import com.ashampoo.kim.common.ByteOrder
 import com.ashampoo.kim.common.startsWith
 import com.ashampoo.kim.common.toBytes
 import com.ashampoo.kim.format.jpeg.JpegConstants
+import com.ashampoo.kim.format.jpeg.elements.JpegBytesElement
+import com.ashampoo.kim.format.jpeg.elements.JpegSOS
+import com.ashampoo.kim.format.jpeg.elements.UnknownSegment
 import com.ashampoo.kim.format.jpeg.iptc.IptcParser
 import com.ashampoo.kim.output.ByteWriter
 
-open class JFIFPieceSegment(
-    val marker: Int,
-    val markerBytes: ByteArray,
-    val segmentLengthBytes: ByteArray,
-    val segmentBytes: ByteArray
-) : JFIFPiece {
-
-    constructor(marker: Int, segmentBytes: ByteArray) : this(
-        marker = marker,
-        markerBytes = marker.toShort().toBytes(JpegConstants.JPEG_BYTE_ORDER),
-        segmentLengthBytes = (segmentBytes.size + 2).toShort().toBytes(JpegConstants.JPEG_BYTE_ORDER),
-        segmentBytes = segmentBytes
-    )
-
-    override fun toString(): String = "JFIF Piece $marker"
-
-    override fun write(byteWriter: ByteWriter) {
-        byteWriter.write(markerBytes)
-        byteWriter.write(segmentLengthBytes)
-        byteWriter.write(segmentBytes)
+object JFIFUtils {
+    fun JpegBytesElement.write(byteWriter: ByteWriter, byteOrder: ByteOrder) {
+        val markerBytes = marker.toShort().toBytes(byteOrder)
+        when (this) {
+            is JpegSOS -> {
+                byteWriter.write(markerBytes)
+                byteWriter.write(imageData)
+            }
+            is UnknownSegment -> {
+                byteWriter.write(markerBytes)
+                byteWriter.write((segmentBytes.size + 2).toShort().toBytes(byteOrder))
+                byteWriter.write(segmentBytes)
+            }
+        }
     }
 
-    fun isAppSegment(): Boolean =
+    fun UnknownSegment.isAppSegment(): Boolean =
         marker >= JpegConstants.JPEG_APP0_MARKER && marker <= JpegConstants.JPEG_APP15_MARKER
 
-    fun isExifSegment(): Boolean {
+    fun UnknownSegment.isExifSegment(): Boolean {
 
         if (marker != JpegConstants.JPEG_APP1_MARKER)
             return false
@@ -55,7 +53,7 @@ open class JFIFPieceSegment(
         return segmentBytes.startsWith(JpegConstants.EXIF_IDENTIFIER_CODE)
     }
 
-    fun isIptcSegment(): Boolean {
+    fun UnknownSegment.isIptcSegment(): Boolean {
 
         if (marker != JpegConstants.JPEG_APP13_MARKER)
             return false
@@ -63,7 +61,7 @@ open class JFIFPieceSegment(
         return IptcParser.isIptcSegment(segmentBytes)
     }
 
-    fun isXmpSegment(): Boolean {
+    fun UnknownSegment.isXmpSegment(): Boolean {
 
         if (marker != JpegConstants.JPEG_APP1_MARKER)
             return false

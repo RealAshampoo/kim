@@ -21,17 +21,19 @@ import com.ashampoo.kim.common.ExifOverflowException
 import com.ashampoo.kim.common.ImageReadException
 import com.ashampoo.kim.common.ImageWriteException
 import com.ashampoo.kim.common.getRemainingBytes
-import com.ashampoo.kim.common.toBytes
 import com.ashampoo.kim.format.jpeg.JpegConstants.JPEG_BYTE_ORDER
+import com.ashampoo.kim.format.jpeg.elements.JpegBytesElement
+import com.ashampoo.kim.format.jpeg.elements.UnknownSegment
 import com.ashampoo.kim.format.jpeg.iptc.IptcBlock
 import com.ashampoo.kim.format.jpeg.iptc.IptcConstants
 import com.ashampoo.kim.format.jpeg.iptc.IptcMetadata
 import com.ashampoo.kim.format.jpeg.iptc.IptcParser
 import com.ashampoo.kim.format.jpeg.iptc.IptcWriter
-import com.ashampoo.kim.format.jpeg.jfif.JFIFPiece
-import com.ashampoo.kim.format.jpeg.jfif.JFIFPieceImageData
-import com.ashampoo.kim.format.jpeg.jfif.JFIFPieceSegment
-import com.ashampoo.kim.format.jpeg.jfif.JFIFPieceSegmentExif
+import com.ashampoo.kim.format.jpeg.jfif.JFIFUtils.isAppSegment
+import com.ashampoo.kim.format.jpeg.jfif.JFIFUtils.isExifSegment
+import com.ashampoo.kim.format.jpeg.jfif.JFIFUtils.isIptcSegment
+import com.ashampoo.kim.format.jpeg.jfif.JFIFUtils.isXmpSegment
+import com.ashampoo.kim.format.jpeg.jfif.JFIFUtils.write
 import com.ashampoo.kim.format.tiff.write.TiffImageWriterBase
 import com.ashampoo.kim.format.tiff.write.TiffImageWriterLossless
 import com.ashampoo.kim.format.tiff.write.TiffImageWriterLossy
@@ -50,84 +52,39 @@ object JpegRewriter : BinaryFileParser() {
         byteOrder = JPEG_BYTE_ORDER
     }
 
-    private fun readSegments(byteReader: ByteReader): JFIFPieces {
+    private fun insertAfterLastAppSegments(
+        segments: List<JpegBytesElement>,
+        newSegments: List<JpegBytesElement>
+    ): List<JpegBytesElement> {
+        if (segments.isEmpty())
+            throw ImageWriteException("JPEG file has no APP segments.")
 
-        val allPieces = mutableListOf<JFIFPiece>()
-        val segmentPieces = mutableListOf<JFIFPiece>()
-
-        val visitor: JpegVisitor = object : JpegVisitor {
-
-            /* Read the whole file. */
-            override fun beginSOS(): Boolean {
-                return true
-            }
-
-            override fun visitSOS(marker: Int, markerBytes: ByteArray, imageData: ByteArray) {
-                allPieces.add(JFIFPieceImageData(markerBytes, imageData))
-            }
-
-            override fun visitSegment(
-                marker: Int,
-                markerBytes: ByteArray,
-                segmentLength: Int,
-                segmentLengthBytes: ByteArray,
-                segmentBytes: ByteArray
-            ): Boolean {
-
-                val piece: JFIFPiece = JFIFPieceSegment(marker, markerBytes, segmentLengthBytes, segmentBytes)
-
-                allPieces.add(piece)
-                segmentPieces.add(piece)
-
-                return true
-            }
+        val lastAppIndex = segments.indexOfLast { segment ->
+            segment is UnknownSegment && segment.isAppSegment()
         }
 
-        JpegUtils.traverseJFIF(byteReader, visitor)
-
-        return JFIFPieces(allPieces, segmentPieces)
-    }
-
-    private fun insertAfterLastAppSegments(
-        segments: List<JFIFPiece>,
-        newSegments: List<JFIFPiece>
-    ): List<JFIFPiece> {
-
-        val lastAppIndex = segments.indices.lastOrNull { index ->
-            val segment = segments[index]
-            segment is JFIFPieceSegment && segment.isAppSegment()
-        } ?: -1
-
-        val mergedSegments = segments.toMutableList()
-
-        if (lastAppIndex == -1) {
-
-            if (segments.isEmpty())
-                throw ImageWriteException("JPEG file has no APP segments.")
-
-            mergedSegments.addAll(1, newSegments)
-
-        } else
-            mergedSegments.addAll(lastAppIndex + 1, newSegments)
-
-        return mergedSegments
+        return buildList(segments.size + newSegments.size) {
+            addAll(segments)
+            if (lastAppIndex == -1)
+                addAll(1, newSegments)
+            else
+                addAll(lastAppIndex + 1, newSegments)
+        }
     }
 
     fun updateExifMetadataLossless(byteReader: ByteReader, byteWriter: ByteWriter, outputSet: TiffOutputSet) {
 
-        val (oldSegments, segmentPieces) = readSegments(byteReader)
+        val oldSegments = JpegUtils.readJFIF(byteReader)
 
-        val oldSegmentsWithoutExif =
-            oldSegments.filterNot { piece -> piece is JFIFPieceSegment && piece.isExifSegment() }
-
-        val exifSegmentPieces =
-            segmentPieces.filterIsInstance<JFIFPieceSegment>().filter { it.isExifSegment() }
+        val (exifSegmentPieces, oldSegmentsWithoutExif) = oldSegments.partition {
+            it is UnknownSegment && it.isExifSegment()
+        }
 
         val writer: TiffImageWriterBase
 
         if (!exifSegmentPieces.isEmpty()) {
 
-            val exifPiece = exifSegmentPieces.first()
+            val exifPiece = exifSegmentPieces.first() as UnknownSegment
 
             val exifBytes = exifPiece.segmentBytes.getRemainingBytes(6)
 
@@ -147,7 +104,7 @@ object JpegRewriter : BinaryFileParser() {
 
     private fun writeSegmentsReplacingExif(
         byteWriter: ByteWriter,
-        oldSegments: List<JFIFPiece>,
+        oldSegments: List<JpegBytesElement>,
         newBytes: ByteArray?
     ) {
 
@@ -156,60 +113,21 @@ object JpegRewriter : BinaryFileParser() {
         byteWriter.write(JpegConstants.SOI)
 
         if (newBytes != null) {
-
-            val markerBytes = JpegConstants.JPEG_APP1_MARKER.toShort().toBytes(byteOrder)
-
             if (newBytes.size > JpegConstants.MAX_SEGMENT_SIZE)
                 throw ExifOverflowException("APP1 Segment is too long: " + newBytes.size)
 
-            val markerLength = newBytes.size + 2
-            val markerLengthBytes = markerLength.toShort().toBytes(byteOrder)
-            var index = 0
+            val firstSegment = newSegments.first()
+            val exifSegment = UnknownSegment(JpegConstants.JPEG_APP1_MARKER, newBytes)
 
-            val firstSegment = newSegments[index] as JFIFPieceSegment
-
-            if (firstSegment.marker == JpegConstants.JFIF_MARKER)
-                index = 1
-
-            val exifSegment =
-                JFIFPieceSegmentExif(JpegConstants.JPEG_APP1_MARKER, markerBytes, markerLengthBytes, newBytes)
-
-            newSegments.add(index, exifSegment)
+            if (firstSegment.marker == JpegConstants.JFIF_MARKER) {
+                newSegments.add(1, exifSegment)
+            } else {
+                newSegments.add(0, exifSegment)
+            }
         }
 
-        var app1Written = false
-
-        @Suppress("LoopWithTooManyJumpStatements")
         for (piece in newSegments) {
-
-            if (piece is JFIFPieceSegmentExif) {
-
-                /* Only replace first APP1 segment; skips others. */
-                if (app1Written)
-                    continue
-
-                app1Written = true
-
-                /* It's NULL if the user wants to delete EXIF */
-                if (newBytes == null)
-                    continue
-
-                val markerBytes = JpegConstants.JPEG_APP1_MARKER.toShort().toBytes(byteOrder)
-
-                if (newBytes.size > JpegConstants.MAX_SEGMENT_SIZE)
-                    throw ExifOverflowException("APP1 Segment is too long: " + newBytes.size)
-
-                val markerLength = newBytes.size + 2
-                val markerLengthBytes = markerLength.toShort().toBytes(byteOrder)
-
-                byteWriter.write(markerBytes)
-                byteWriter.write(markerLengthBytes)
-                byteWriter.write(newBytes)
-
-            } else {
-
-                piece.write(byteWriter)
-            }
+            piece.write(byteWriter, byteOrder)
         }
     }
 
@@ -239,10 +157,10 @@ object JpegRewriter : BinaryFileParser() {
      */
     fun writeIPTC(byteReader: ByteReader, byteWriter: ByteWriter, newData: IptcMetadata) {
 
-        val (oldPieces) = readSegments(byteReader)
+        val oldPieces = JpegUtils.readJFIF(byteReader).toList()
 
-        val photoshopApp13Segments =
-            oldPieces.filterIsInstance<JFIFPieceSegment>().filter { it.isIptcSegment() }
+        val (photoshopApp13Segments, oldPiecesWithoutPhotoshopApp13Segments) =
+            oldPieces.partition { piece -> piece is UnknownSegment && piece.isIptcSegment() }
 
         if (photoshopApp13Segments.size > 1)
             throw ImageReadException("Image contains more than one Photoshop App13 segment.")
@@ -258,13 +176,10 @@ object JpegRewriter : BinaryFileParser() {
             rawBlocks = newData.nonIptcBlocks + newBlock
         )
 
-        val iptcSegment = JFIFPieceSegment(
+        val iptcSegment = UnknownSegment(
             marker = JpegConstants.JPEG_APP13_MARKER,
             segmentBytes = IptcWriter.writePhotoshopApp13Segment(newIptc)
         )
-
-        val oldPiecesWithoutPhotoshopApp13Segments =
-            oldPieces.filterNot { piece -> piece is JFIFPieceSegment && piece.isIptcSegment() }
 
         val mergedPieces = insertAfterLastAppSegments(
             oldPiecesWithoutPhotoshopApp13Segments,
@@ -274,17 +189,17 @@ object JpegRewriter : BinaryFileParser() {
         byteWriter.write(JpegConstants.SOI)
 
         for (piece in mergedPieces)
-            piece.write(byteWriter)
+            piece.write(byteWriter, byteOrder)
     }
 
     fun updateXmpXml(byteReader: ByteReader, byteWriter: ByteWriter, xmpXml: String) {
 
-        val (allPieces) = readSegments(byteReader)
+        val allPieces = JpegUtils.readJFIF(byteReader)
 
         val piecesWithoutXmpSegments =
-            allPieces.filterNot { piece -> piece is JFIFPieceSegment && piece.isXmpSegment() }
+            allPieces.filterNot { piece -> piece is UnknownSegment && piece.isXmpSegment() }.toList()
 
-        val newPieces = mutableListOf<JFIFPieceSegment>()
+        val newPieces = mutableListOf<UnknownSegment>()
 
         val xmpXmlBytes = xmpXml.toByteArray()
 
@@ -302,7 +217,7 @@ object JpegRewriter : BinaryFileParser() {
 
             val segmentData = segmentWriter.toByteArray()
 
-            newPieces.add(JFIFPieceSegment(JpegConstants.JPEG_APP1_MARKER, segmentData))
+            newPieces.add(UnknownSegment(JpegConstants.JPEG_APP1_MARKER, segmentData))
 
         } else {
 
@@ -321,7 +236,7 @@ object JpegRewriter : BinaryFileParser() {
 
                 val segmentData = segmentWriter.toByteArray()
 
-                newPieces.add(JFIFPieceSegment(JpegConstants.JPEG_APP1_MARKER, segmentData))
+                newPieces.add(UnknownSegment(JpegConstants.JPEG_APP1_MARKER, segmentData))
 
                 offset += segmentSize
             }
@@ -332,11 +247,6 @@ object JpegRewriter : BinaryFileParser() {
         byteWriter.write(JpegConstants.SOI)
 
         for (piece in mergedPieces)
-            piece.write(byteWriter)
+            piece.write(byteWriter, byteOrder)
     }
-
-    private data class JFIFPieces(
-        val allPieces: List<JFIFPiece>,
-        val segmentPieces: List<JFIFPiece>
-    )
 }
